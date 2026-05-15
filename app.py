@@ -15,16 +15,14 @@ Always end with:
 ⚠️ This is not a substitute for professional medical advice. Please consult a doctor for proper diagnosis.
 """
 
-st.set_page_config(page_title="Medical Assistant", page_icon="🏥", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Medical Assistant", page_icon="🏥", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-    /* Force light theme for everyone */
     html, body, [class*="css"], .stApp {
         background-color: #f0f7f4 !important;
         color: #111111 !important;
     }
-    /* Chat messages */
     [data-testid="stChatMessage"] {
         background-color: #ffffff !important;
         border-radius: 10px !important;
@@ -37,12 +35,17 @@ st.markdown("""
     [data-testid="stChatMessage"] span {
         color: #111111 !important;
     }
-    /* Input box */
-    [data-testid="stChatInput"] {
-        background-color: #ffffff !important;
-        color: #111111 !important;
+    [data-testid="stSidebar"] {
+        background-color: #1a5c3a !important;
     }
-    /* Header */
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] li,
+    [data-testid="stSidebar"] span {
+        color: #ffffff !important;
+    }
     .main-header {
         background-color: #1a5c3a;
         padding: 20px;
@@ -54,6 +57,31 @@ st.markdown("""
     .main-header p { color: rgba(255,255,255,0.85) !important; margin: 5px 0 0 0; font-size: 14px; }
     </style>
 """, unsafe_allow_html=True)
+
+with st.sidebar:
+    st.markdown("## 🏥 Medical Assistant")
+    st.markdown("---")
+    st.markdown("### ℹ️ About")
+    st.markdown("This AI chatbot helps you understand your symptoms and suggests over-the-counter medicines.")
+    st.markdown("---")
+    st.markdown("### 📋 How to use")
+    st.markdown("""
+    - Type your symptoms in the chat box
+    - Get instant medical guidance
+    - Follow dosage instructions carefully
+    - See a doctor if symptoms are severe
+    """)
+    st.markdown("---")
+    st.markdown("### ⚠️ Disclaimer")
+    st.markdown("This app is not a substitute for professional medical advice.")
+    st.markdown("---")
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Hello! I'm your medical assistant. Please describe your symptoms and I'll help you understand what might be going on. 😊"
+        })
+        st.rerun()
 
 st.markdown("""
     <div class="main-header">
@@ -70,17 +98,18 @@ if "messages" not in st.session_state:
     })
 
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
+    avatar = "🏥" if message["role"] == "assistant" else "🧑"
+    with st.chat_message(message["role"], avatar=avatar):
         st.markdown(message["content"])
 
 if user_input := st.chat_input("Describe your symptoms here..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar="🧑"):
         st.markdown(user_input)
 
     client = Groq(api_key=API_KEY)
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar="🏥"):
         with st.spinner("Analyzing your symptoms..."):
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
