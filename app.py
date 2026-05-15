@@ -1,5 +1,7 @@
 from groq import Groq
 import streamlit as st
+import datetime
+import json
 
 API_KEY = st.secrets["GROQ_API_KEY"]
 
@@ -23,7 +25,7 @@ def is_emergency(text):
     return any(keyword in text_lower for keyword in EMERGENCY_KEYWORDS)
 
 # ─────────────────────────────────────────────
-# SYSTEM PROMPT (dynamic based on profile)
+# SYSTEM PROMPT
 # ─────────────────────────────────────────────
 def get_system_prompt(profile=None, language="English"):
     lang_instruction = {
@@ -66,6 +68,28 @@ After the user answers the follow-up questions, respond in this exact format:
 Always end with:
 ⚠️ This is not a substitute for professional medical advice. Please consult a doctor for proper diagnosis.
 """
+
+# ─────────────────────────────────────────────
+# SAVE CHAT AS TEXT FILE
+# ─────────────────────────────────────────────
+def generate_chat_text(messages, profile):
+    lines = []
+    lines.append("=" * 50)
+    lines.append("🏥 MEDICAL ASSISTANT — CHAT HISTORY")
+    lines.append(f"📅 Date: {datetime.datetime.now().strftime('%d %B %Y, %I:%M %p')}")
+    if profile:
+        lines.append(f"👤 Patient: {profile.get('name')} | Age: {profile.get('age')} | Gender: {profile.get('gender')}")
+        lines.append(f"🩺 Conditions: {profile.get('conditions')} | Allergies: {profile.get('allergies')}")
+    lines.append("=" * 50)
+    lines.append("")
+    for msg in messages:
+        role = "🏥 Assistant" if msg["role"] == "assistant" else "🧑 You"
+        lines.append(f"{role}:")
+        lines.append(msg["content"])
+        lines.append("")
+    lines.append("=" * 50)
+    lines.append("⚠️ This is not a substitute for professional medical advice.")
+    return "\n".join(lines)
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -144,6 +168,20 @@ st.markdown("""
         margin-top: 5px;
         border: 1px solid rgba(255,255,255,0.2);
     }
+    .feedback-bar {
+        display: flex;
+        gap: 8px;
+        margin-top: 6px;
+        align-items: center;
+    }
+    .doctor-card {
+        background: rgba(255,255,255,0.95);
+        border-radius: 10px;
+        padding: 12px;
+        margin: 6px 0;
+        border: 1px solid rgba(26,92,58,0.2);
+        color: #111111;
+    }
     </style>
     <div class="main-bg"></div>
 """, unsafe_allow_html=True)
@@ -159,6 +197,12 @@ if "profile_saved" not in st.session_state:
     st.session_state.profile_saved = False
 if "language" not in st.session_state:
     st.session_state.language = "English"
+if "feedback" not in st.session_state:
+    st.session_state.feedback = {}  # {msg_index: "up" or "down"}
+if "show_doctors" not in st.session_state:
+    st.session_state.show_doctors = False
+if "city" not in st.session_state:
+    st.session_state.city = ""
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -201,7 +245,6 @@ with st.sidebar:
             "allergies": allergies if allergies else "None"
         }
         st.session_state.profile_saved = True
-        # Reset chat with personalized greeting
         st.session_state.messages = [{
             "role": "assistant",
             "content": f"Hello {name}! 👋 I'm your personal medical assistant. I've saved your profile. Please describe your symptoms and I'll give you personalized guidance. 😊"
@@ -219,6 +262,18 @@ with st.sidebar:
         """, unsafe_allow_html=True)
 
     st.markdown("---")
+
+    # 🏥 Nearby Doctor Finder
+    st.markdown("### 🏥 Find Nearby Doctors")
+    city_input = st.text_input("Enter your city", value=st.session_state.city, placeholder="e.g. Kolkata, Mumbai")
+    if st.button("🔍 Search Doctors & Hospitals", use_container_width=True):
+        if city_input.strip():
+            st.session_state.city = city_input.strip()
+            st.session_state.show_doctors = True
+        else:
+            st.warning("Please enter your city name.")
+
+    st.markdown("---")
     st.markdown("### 🚨 Emergency Numbers")
     st.markdown("""
     - 🚑 Ambulance: **102**
@@ -234,15 +289,31 @@ with st.sidebar:
     - Type your symptoms
     - Answer follow-up questions
     - Get personalized guidance
+    - 👍/👎 rate each response
+    - 💾 Download your chat anytime
     """)
     st.markdown("---")
     st.markdown("### ⚠️ Disclaimer")
     st.markdown("This app is not a substitute for professional medical advice.")
     st.markdown("---")
+
+    # 💾 Download Chat History
+    if st.session_state.messages:
+        chat_text = generate_chat_text(st.session_state.messages, st.session_state.profile)
+        st.download_button(
+            label="💾 Download Chat History",
+            data=chat_text,
+            file_name=f"medical_chat_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain",
+            use_container_width=True
+        )
+        st.markdown("")
+
     if st.button("🗑️ Clear Chat", use_container_width=True):
         name = st.session_state.profile.get("name", "") if st.session_state.profile else ""
         greeting = f"Hello {name}! 👋 Chat cleared. Please describe your symptoms. 😊" if name else "Hello! I'm your medical assistant. Please describe your symptoms. 😊"
         st.session_state.messages = [{"role": "assistant", "content": greeting}]
+        st.session_state.feedback = {}
         st.rerun()
 
 # ─────────────────────────────────────────────
@@ -265,6 +336,54 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+# NEARBY DOCTOR FINDER (Google Maps link)
+# ─────────────────────────────────────────────
+if st.session_state.show_doctors and st.session_state.city:
+    city = st.session_state.city
+    st.markdown("### 🏥 Nearby Doctors & Hospitals")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        query1 = f"hospitals near {city}"
+        maps_url1 = f"https://www.google.com/maps/search/hospitals+near+{city.replace(' ', '+')}"
+        st.markdown(f"""
+        <div class="doctor-card">
+            <b>🏥 Hospitals</b><br>
+            Find hospitals near <b>{city}</b><br><br>
+            <a href="{maps_url1}" target="_blank" style="background:#1a5c3a;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;">
+                📍 Open in Google Maps
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        maps_url2 = f"https://www.google.com/maps/search/clinics+near+{city.replace(' ', '+')}"
+        st.markdown(f"""
+        <div class="doctor-card">
+            <b>🩺 Clinics</b><br>
+            Find clinics near <b>{city}</b><br><br>
+            <a href="{maps_url2}" target="_blank" style="background:#1a5c3a;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;">
+                📍 Open in Google Maps
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        maps_url3 = f"https://www.google.com/maps/search/pharmacy+near+{city.replace(' ', '+')}"
+        st.markdown(f"""
+        <div class="doctor-card">
+            <b>💊 Pharmacies</b><br>
+            Find pharmacies near <b>{city}</b><br><br>
+            <a href="{maps_url3}" target="_blank" style="background:#1a5c3a;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;">
+                📍 Open in Google Maps
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+# ─────────────────────────────────────────────
 # INITIAL GREETING
 # ─────────────────────────────────────────────
 if not st.session_state.messages:
@@ -275,12 +394,34 @@ if not st.session_state.messages:
     st.session_state.messages.append({"role": "assistant", "content": greeting})
 
 # ─────────────────────────────────────────────
-# CHAT HISTORY
+# CHAT HISTORY WITH FEEDBACK BUTTONS
 # ─────────────────────────────────────────────
-for message in st.session_state.messages:
+for i, message in enumerate(st.session_state.messages):
     avatar = "🏥" if message["role"] == "assistant" else "🧑"
     with st.chat_message(message["role"], avatar=avatar):
         st.markdown(message["content"])
+
+        # 👍👎 Feedback only for assistant messages (not the first greeting)
+        if message["role"] == "assistant" and i > 0:
+            feedback_key = f"feedback_{i}"
+            current_feedback = st.session_state.feedback.get(i)
+
+            col1, col2, col3 = st.columns([1, 1, 8])
+            with col1:
+                thumbs_up_style = "✅" if current_feedback == "up" else "👍"
+                if st.button(thumbs_up_style, key=f"up_{i}", help="Helpful"):
+                    st.session_state.feedback[i] = "up"
+                    st.rerun()
+            with col2:
+                thumbs_down_style = "❌" if current_feedback == "down" else "👎"
+                if st.button(thumbs_down_style, key=f"down_{i}", help="Not helpful"):
+                    st.session_state.feedback[i] = "down"
+                    st.rerun()
+            with col3:
+                if current_feedback == "up":
+                    st.markdown("*Thanks for the positive feedback! 😊*")
+                elif current_feedback == "down":
+                    st.markdown("*Sorry to hear that. Please consult a doctor. 🙏*")
 
 # ─────────────────────────────────────────────
 # CHAT INPUT
